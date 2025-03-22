@@ -489,7 +489,7 @@ def mobilenetv4_conv_small_ori1(**kwargs):
 class AuxiliaryNet(nn.Module):
     def __init__(self):
         super(AuxiliaryNet, self).__init__()
-        self.conv1 = conv_bn(64, 128, 3, 2)# 16，给、ghost，原64
+        self.conv1 = conv_bn(128, 128, 3, 2)# 16，给、ghost，原64
         self.conv2 = conv_bn(128, 128, 3, 1)
         self.conv3 = conv_bn(128, 32, 3, 2)
         self.conv4 = conv_bn(32, 128, 3, 1)

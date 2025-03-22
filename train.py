@@ -24,6 +24,7 @@ import models.pfld
 import models.ghostnetv3
 import models.mobilenetv4
 import models.mobilenetv4_gcon
+import  models.model_fastvit
 #from models.pfld import PFLDInference, AuxiliaryNet
 #from models.ghostnetv3 import GhostStarNet,AuxiliaryNet
 from pfld.loss import PFLDLoss
@@ -151,7 +152,20 @@ def main(args):
         pfld_backbone = models.mobilenetv4_gcon.mobilenetv4_conv_small_gcon().to(device)
         auxiliarynet = models.mobilenetv4_gcon.AuxiliaryNet_Ori().to(device)
 
+    elif args.model == 'fastvit_s12':
+        pfld_backbone = models.model_fastvit.fastvit_s12(pretrained=False,fork_feat=False,num_classes=196,
+            ).to(device)
+        auxiliarynet = models.mobilenetv4_gcon.AuxiliaryNet().to(device)
 
+        #加载预训练权重
+        #加载权重文件
+        pretrained_state_dict = torch.load(r'./pretrain_model/fastvit_s12.pth.tar')
+        #获取模型的字典
+        model_dict = pfld_backbone.state_dict()
+        # 按键值复制权重
+        for key in pretrained_state_dict['state_dict']:
+            if key in model_dict and pretrained_state_dict['state_dict'][key].shape == model_dict[key].shape:
+                model_dict[key] = pretrained_state_dict['state_dict'][key]
 
     else:
         ##model not support
@@ -174,9 +188,9 @@ def main(args):
     # scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-10)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     #     optimizer, mode='min', patience=args.lr_patience, verbose=True)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode='min', patience=args.lr_patience, min_lr=1e-30)
-    # scheduler = StepLR(optimizer, step_size=50, gamma=0.8, verbose=True)
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    # optimizer, mode='min', patience=args.lr_patience, min_lr=1e-30)
+    scheduler = StepLR(optimizer, step_size=10, gamma=0.8, verbose=True)
     if args.resume:
         checkpoint = torch.load(args.resume)
         auxiliarynet.load_state_dict(checkpoint["auxiliarynet"])
@@ -219,8 +233,8 @@ def main(args):
         val_loss = validate(wlfw_val_dataloader, pfld_backbone, auxiliarynet,
                             criterion)
         #根据损失设置学习率
-        scheduler.step(val_loss)
-        # scheduler.step()
+        # scheduler.step(val_loss)
+        scheduler.step()
   
 
         writer.add_scalar('data/weighted_loss', weighted_train_loss, epoch)
@@ -239,7 +253,7 @@ def main(args):
 def parse_args():
     parser = argparse.ArgumentParser(description='pfld')
     # general
-    parser.add_argument('--model', default="ghostnetv3", type=str)
+    parser.add_argument('--model', default="fastvit_s12", type=str)
     parser.add_argument('-j', '--workers', default=0, type=int)
     parser.add_argument('--devices_id', default='0', type=str)  #TBD
     parser.add_argument('--test_initial', default='false', type=str2bool)  #TBD
