@@ -287,14 +287,14 @@ def objective(trial,args):
             'epoch: {}/{}, weighted_train_loss: {:.4f}, train_loss: {:.4f}, val_loss: {:.4f}'
             .format(epoch, args.end_epoch, weighted_train_loss, train_loss,
                     val_loss))
-        # 早停检查
+        # # 早停检查
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            counter = 0
-        else:
-            counter += 1
-            if counter >= args.early_stopping_patience:
-                break
+        #     counter = 0
+        # else:
+        #     counter += 1
+        #     if counter >= args.early_stopping_patience:
+        #         break
 
         #判断是否应该结束当前实验
         if trial.should_prune():
@@ -306,8 +306,11 @@ def main(args):
     # 超参自动搜索
     #存储器
     # 创建数据库存储
+    storage_dir_path=args.snapshot.replace('snapshot','optuna_storage')   
+    os.makedirs(storage_dir_path, exist_ok=True)  # 关键修改：添加exist_ok=True
+    storage_path=os.path.join(storage_dir_path,'optuna.db')
     storage = RDBStorage(
-        url="sqlite:///study.db",  # 使用SQLite，也可以用MySQL/PgSQL
+        url=f"sqlite:///{storage_path}",  # 使用SQLite，也可以用MySQL/PgSQL
         heartbeat_interval=60,      # 心跳间隔，避免长时间运行时连接断开
         grace_period=120            # 优雅关闭时间
     )
