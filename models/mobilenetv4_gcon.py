@@ -532,3 +532,28 @@ class AuxiliaryNet_Ori(nn.Module):
         x = self.fc2(x)
 
         return x
+    
+
+class AuxiliaryNet_input96(nn.Module):
+    def __init__(self):
+        super(AuxiliaryNet_input96, self).__init__()
+        self.conv1 = conv_bn(96, 128, 3, 2)# 16，给、ghost，原64
+        self.conv2 = conv_bn(128, 128, 3, 1)
+        self.conv3 = conv_bn(128, 32, 3, 2)
+        self.conv4 = conv_bn(32, 128, 3, 1)
+        self.max_pool1 = nn.MaxPool2d(3)
+        self.fc1 = nn.Linear(128, 32)
+        self.fc2 = nn.Linear(32, 3)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.max_pool1(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc1(x)
+        x = self.fc2(x)
+
+        return x
+    

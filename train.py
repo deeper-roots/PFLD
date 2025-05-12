@@ -2,6 +2,7 @@
 #-*- coding:utf-8 -*-
 
 import argparse
+import datetime
 import logging
 from pathlib import Path
 import time
@@ -166,7 +167,20 @@ def main(args):
         for key in pretrained_state_dict['state_dict']:
             if key in model_dict and pretrained_state_dict['state_dict'][key].shape == model_dict[key].shape:
                 model_dict[key] = pretrained_state_dict['state_dict'][key]
+    elif args.model == 'fastvit_t8':
+        pfld_backbone = models.model_fastvit.fastvit_t8(pretrained=False,fork_feat=False,num_classes=196,
+            ).to(device)
+        auxiliarynet = models.mobilenetv4_gcon.AuxiliaryNet_input96().to(device)
 
+        #加载预训练权重
+        #加载权重文件    
+        pretrained_state_dict = torch.load(r'./pretrain_model/fastvit_t8.pth.tar')
+        #获取模型的字典
+        model_dict = pfld_backbone.state_dict()
+        # 按键值复制权重
+        for key in pretrained_state_dict['state_dict']:
+            if key in model_dict and pretrained_state_dict['state_dict'][key].shape == model_dict[key].shape:
+                model_dict[key] = pretrained_state_dict['state_dict'][key]
     else:
         ##model not support
         raise Exception("模型不支持")
@@ -183,6 +197,17 @@ def main(args):
     }],
                                  lr=args.base_lr,
                                  weight_decay=args.weight_decay)
+    if args.lr_scheduler == 'cosine':
+        #余弦热重启学习率调度器，带有热重启，容易跳出局部最优点
+        scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-10)
+    elif args.lr_scheduler == 'step':
+        scheduler = StepLR(optimizer, step_size=args.step_size, gamma=args.gamma, verbose=True)
+    elif args.lr_scheduler == 'ReduceLROnPlateau':
+        #该学习率调度器 效果不太好
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', patience=args.lr_patience, verbose=True)
+    else:
+        raise Exception("lr_scheduler not support")
     
     # 定义学习率调度器
     # scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-10)
@@ -190,7 +215,6 @@ def main(args):
     #     optimizer, mode='min', patience=args.lr_patience, verbose=True)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     # optimizer, mode='min', patience=args.lr_patience, min_lr=1e-30)
-    scheduler = StepLR(optimizer, step_size=10, gamma=0.8, verbose=True)
     if args.resume:
         checkpoint = torch.load(args.resume)
         auxiliarynet.load_state_dict(checkpoint["auxiliarynet"])
@@ -233,8 +257,11 @@ def main(args):
         val_loss = validate(wlfw_val_dataloader, pfld_backbone, auxiliarynet,
                             criterion)
         #根据损失设置学习率
-        # scheduler.step(val_loss)
-        scheduler.step()
+        if args.lr_scheduler == 'ReduceLROnPlateau':
+            scheduler.step(val_loss)
+        else:
+            scheduler.step()
+
   
 
         writer.add_scalar('data/weighted_loss', weighted_train_loss, epoch)
@@ -243,11 +270,11 @@ def main(args):
             'train loss': train_loss
         }, epoch)
         #记录数据
-        # 记录到文本文件
-        with open('training_log.txt', 'a') as f:
-            f.write(f'Epoch {epoch} - Weighted Train Loss: {weighted_train_loss}\n')
-            f.write(f'Epoch {epoch} - Val Loss: {val_loss}, Train Loss: {train_loss}\n')
-        writer.close()
+        # # 记录到文本文件
+        # with open('training_log.txt', 'a') as f:
+        #     f.write(f'Epoch {epoch} - Weighted Train Loss: {weighted_train_loss}\n')
+        #     f.write(f'Epoch {epoch} - Val Loss: {val_loss}, Train Loss: {train_loss}\n')
+        # writer.close()
 
 
 def parse_args():
@@ -260,9 +287,17 @@ def parse_args():
  
     # training 
     ##  -- optimizer
+    #默认0.0001
     parser.add_argument('--base_lr', default=0.0001, type=int)
     parser.add_argument('--weight-decay', '--wd', default=1e-6, type=float)
-
+    #step  学习率调度器参数
+    parser.add_argument('--step_size', default=40, type=int)#step学习率调度器的step的大小，多少个epoches后减少学习率
+    parser.add_argument('--gamma', default=0.1, type=float)# 默认的学习率衰减率
+    parser.add_argument('--lr_scheduler', default='step', type=str)
+    # 余弦退火学习率调度器默认参数
+    parser.add_argument('--T_0', default=50, type=int)
+    parser.add_argument('--T_mult', default=1, type=int)
+    parser.add_argument('--eta_min', default=1e-20, type=float)
     # -- lr  
     parser.add_argument("--lr_patience", default=40, type=int)
 
@@ -275,7 +310,7 @@ def parse_args():
     parser.add_argument('--snapshot',
                         default='./checkpoint/snapshot/',  
                         type=str,
-                        metavar='PATH')
+                        metavar='PATH')  #保存模型的路径
     parser.add_argument('--log_file',
                         default="./checkpoint/train.logs",
                         type=str)
@@ -305,4 +340,19 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+    args.model='fastvit_t8'
+    args.base_lr=0.001
+    #以下两个参数用于fastvit_t8模型，达到0.16的loss的效果,step学习率调度器
+    args.step_size=20
+    args.gamma=0.1
+    #增加时间戳
+    args.exp_name='fastvit_t8_'+str(datetime.datetime.now().strftime('%Y%m%d_%H%M%S'))
+    args.log_file='./exp/'+args.model+'/'+args.exp_name+'/train.logs'
+    args.tensorboard='./exp/'+args.model+'/'+args.exp_name+'/tensorboard'
+    args.snapshot='./exp/'+args.model+'/'+args.exp_name+'/snapshot/'
+
+    if not os.path.exists(args.snapshot):
+        os.makedirs(args.snapshot)
+    if not os.path.exists(args.tensorboard):
+        os.makedirs(args.tensorboard)
     main(args)
