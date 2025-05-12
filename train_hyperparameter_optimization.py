@@ -32,6 +32,14 @@ import  models.model_fastvit
 from pfld.loss import PFLDLoss
 from pfld.utils import AverageMeter
 
+from optuna.storages import RDBStorage
+from optuna.visualization import (
+    plot_optimization_history,
+    plot_param_importances,
+    plot_parallel_coordinate
+)
+
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -123,7 +131,8 @@ def objective(trial,args):
         ]
     )
 
-    batchsize = trial.suggest_categorical('batchsize', [8, 16, 32, 64, 128, 256])
+    # batchsize = trial.suggest_categorical('batchsize', [128, 256])
+    batchsize = args.train_batchsize
     baselr = trial.suggest_float('baselr', 1e-4, 1e-2,step=0.0001)
     T_0 = trial.suggest_int('T_0', 10, 100)
     T_mult = trial.suggest_int('T_mult', 1, 10)
@@ -287,13 +296,32 @@ def objective(trial,args):
             if counter >= args.early_stopping_patience:
                 break
 
+        #判断是否应该结束当前实验
+        if trial.should_prune():
+            raise optuna.TrialPruned(f'试验在 epoch {epoch} 被提前终止')        
     return best_val_loss
 
 
 def main(args):
     # 超参自动搜索
+    #存储器
+    # 创建数据库存储
+    storage = RDBStorage(
+        url="sqlite:///study.db",  # 使用SQLite，也可以用MySQL/PgSQL
+        heartbeat_interval=60,      # 心跳间隔，避免长时间运行时连接断开
+        grace_period=120            # 优雅关闭时间
+    )
     # 创建一个 Study 对象并开始优化
-    study = optuna.create_study(direction='minimize')
+    # 定义 pruning 调度器
+    pruner = optuna.pruners.MedianPruner(
+        n_startup_trials=5,  # 在前 5 次试验中不进行 pruning
+        n_warmup_steps=3,    # 每个试验在前 3 个 epoch 内不进行 pruning
+        interval_steps=1,    # 每个 epoch 结束时检查一次是否应该 pruning
+        n_min_trials=3      # 计算中位数的最小试验数量为 3
+    )
+    study = optuna.create_study(direction='minimize',
+                                pruner=pruner,
+                                storage=storage)
     # 使用 lambda 表达式来传递 args 参数
     study.optimize(lambda trial: objective(trial, args), n_trials=100)
 
@@ -306,6 +334,18 @@ def main(args):
     for key, value in trial.params.items():
         print("    {}: {}".format(key, value))
 
+    # 生成并保存可视化图表
+    saved_path=args.snapshot.replace('snapshot','optuna_plots')
+    os.makedirs(saved_path, exist_ok=True)
+    
+    fig = plot_optimization_history(study)
+    fig.write_image(os.path.join(saved_path, "optimization_history.png"))
+    
+    fig = plot_param_importances(study)
+    fig.write_image(os.path.join(saved_path, "param_importances.png"))
+    
+    fig = plot_parallel_coordinate(study)
+    fig.write_image(os.path.join(saved_path, "parallel_coordinate.png"))
 
 def parse_args():
     parser = argparse.ArgumentParser(description='pfld')
@@ -385,9 +425,9 @@ if __name__ == "__main__":
 
     #增加时间戳
     args.exp_name='fastvit_t8_'+str(datetime.datetime.now().strftime('%Y%m%d_%H%M%S'))
-    args.log_file='./exp/'+args.model+'/'+args.exp_name+'/train.logs'
-    args.tensorboard='./exp/'+args.model+'/'+args.exp_name+'/tensorboard'
-    args.snapshot='./exp/'+args.model+'/'+args.exp_name+'/snapshot/'
+    args.log_file='./exp_ho/'+args.model+'/'+args.exp_name+'/train.logs'
+    args.tensorboard='./exp_ho/'+args.model+'/'+args.exp_name+'/tensorboard'
+    args.snapshot='./exp_ho/'+args.model+'/'+args.exp_name+'/snapshot/'
 
     if not os.path.exists(args.snapshot):
         os.makedirs(args.snapshot)
